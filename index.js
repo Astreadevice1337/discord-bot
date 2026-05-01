@@ -53,30 +53,34 @@ async function replyDelete(interaction, text) {
   setTimeout(() => msg.delete().catch(() => {}), 5000);
 }
 
-// команды
+// команды (ИСПРАВЛЕНО: Добавлены обязательные описания опций)
 const commands = [
   new SlashCommandBuilder()
     .setName('mute')
     .setDescription('Мут')
-    .addUserOption(o => o.setName('игрок').setRequired(true))
-    .addStringOption(o => o.setName('время').setRequired(true))
-    .addStringOption(o => o.setName('причина').setRequired(true)),
+    .addUserOption(o => o.setName('игрок').setDescription('Игрок для мута').setRequired(true))
+    .addStringOption(o => o.setName('время').setDescription('Время мута').setRequired(true))
+    .addStringOption(o => o.setName('причина').setDescription('Причина мута').setRequired(true)),
 
   new SlashCommandBuilder()
     .setName('unmute')
     .setDescription('Размут')
-    .addUserOption(o => o.setName('игрок').setRequired(true))
-    .addStringOption(o => o.setName('причина').setRequired(true)),
+    .addUserOption(o => o.setName('игрок').setDescription('Игрок для размута').setRequired(true))
+    .addStringOption(o => o.setName('причина').setDescription('Причина размута').setRequired(true)),
 
   new SlashCommandBuilder()
     .setName('clear')
     .setDescription('Очистить чат')
-    .addIntegerOption(o => o.setName('количество').setRequired(true))
+    .addIntegerOption(o => o.setName('количество').setDescription('Количество сообщений').setRequired(true))
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 (async () => {
-  await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+  try {
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+  } catch (e) {
+    console.error(e);
+  }
 })();
 
 // запуск
@@ -219,7 +223,7 @@ client.on(Events.InteractionCreate, async interaction => {
   // clear
   if (interaction.commandName === "clear") {
     const amount = interaction.options.getInteger('количество');
-    if (amount > 1000) return replyDelete(interaction,"Максимум 1000");
+    if (amount > 100) return replyDelete(interaction,"Максимум 100"); // bulkDelete работает до 100 сообщений
 
     await interaction.channel.bulkDelete(amount,true);
     return replyDelete(interaction,`Удалено ${amount}`);
