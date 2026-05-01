@@ -14,6 +14,7 @@ const {
 } = require('discord.js');
 const http = require('http');
 
+// Сервер для поддержания работы на Render
 http.createServer((req, res) => {
   res.write("Bot is online!");
   res.end();
@@ -35,7 +36,6 @@ const client = new Client({
 });
 
 const activeTickets = new Map();
-const transcripts = new Map();
 
 function parseTime(time) {
   const num = parseInt(time);
@@ -51,7 +51,6 @@ function parseTime(time) {
   }
 }
 
-// ИСПРАВЛЕННЫЕ КОМАНДЫ (Убрана ошибка валидации)
 const commands = [
   new SlashCommandBuilder()
     .setName('mute')
@@ -114,7 +113,13 @@ client.on(Events.InteractionCreate, async interaction => {
       const closeBtn = new ButtonBuilder().setCustomId('close_ticket').setLabel('Закрыть тикет').setStyle(ButtonStyle.Danger);
       
       await channel.send({
-        content: `Привет <@${interaction.user.id}>! Заполни анкету:\n1. Твой ник\n2. Возраст\n3. Сколько играешь`,
+        content: `Привет <@${interaction.user.id}>! Заполни анкету:
+1. Твой ник в игре
+2. Твой возраст
+3. Твоё устройство
+4. Оцени себя в ПВП 0/10
+5. Готов вылетать на кв?
+6. В каких кланах был до этого?`,
         components: [new ActionRowBuilder().addComponents(closeBtn)]
       });
       await interaction.reply({ content: `Тикет создан: <#${channel.id}>`, ephemeral: true });
@@ -145,14 +150,21 @@ client.on(Events.InteractionCreate, async interaction => {
       
       await target.timeout(duration, reason);
       const log = await interaction.guild.channels.fetch(MUTE_LOG_CHANNEL);
-      log.send(`🔇 **Мут**: ${target.user.tag} на ${time}. Причина: ${reason}`);
-      await interaction.reply({ content: `Пользователь ${target.user.tag} замучен на ${time}`, ephemeral: true });
+      
+      const muteText = `🔇 **Игрок ${target.user.tag} был замучен на ${time}. Причина: ${reason}**`;
+      log.send(muteText);
+      await interaction.reply({ content: muteText });
     }
 
     if (interaction.commandName === "unmute") {
       const target = interaction.options.getMember('target');
+      const reason = interaction.options.getString('reason');
       await target.timeout(null);
-      await interaction.reply({ content: `Мут с ${target.user.tag} снят.`, ephemeral: true });
+      const log = await interaction.guild.channels.fetch(MUTE_LOG_CHANNEL);
+
+      const unmuteText = `🔊 **С игрока ${target.user.tag} был снят мут. Причина: ${reason}**`;
+      log.send(unmuteText);
+      await interaction.reply({ content: unmuteText });
     }
   }
 });
