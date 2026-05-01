@@ -14,7 +14,6 @@ const {
 } = require('discord.js');
 const http = require('http');
 
-// Сервер для поддержания работы на Render
 http.createServer((req, res) => {
   res.write("Bot is online!");
   res.end();
@@ -55,14 +54,15 @@ const commands = [
   new SlashCommandBuilder()
     .setName('mute')
     .setDescription('Выдать мут игроку')
-    .addUserOption(o => o.setName('target').setDescription('Кого мутим').setRequired(true))
-    .addStringOption(o => o.setName('time').setDescription('На сколько (10м, 1ч)').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('Причина').setRequired(true)),
+    .addUserOption(o => o.setName('имя_игрока').setDescription('Кого мутим').setRequired(true))
+    // Твоя новая детальная подсказка:
+    .addStringOption(o => o.setName('время').setDescription('с-сек, м-мин, ч-час, д-день, н-нед (Пример: 10м)').setRequired(true))
+    .addStringOption(o => o.setName('причина').setDescription('Причина наказания').setRequired(true)),
   new SlashCommandBuilder()
     .setName('unmute')
     .setDescription('Снять мут с игрока')
-    .addUserOption(o => o.setName('target').setDescription('С кого снять').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('Причина').setRequired(true))
+    .addUserOption(o => o.setName('имя_игрока').setDescription('С кого снять мут').setRequired(true))
+    .addStringOption(o => o.setName('причина').setDescription('Причина снятия').setRequired(true))
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -80,11 +80,11 @@ client.once('ready', async () => {
         const embed = new EmbedBuilder()
           .setTitle("Набор в клан")
           .setDescription('Нажми кнопку ниже, чтобы подать заявку!')
-          .setColor(0x5865F2);
+          .setColor(0xFFFFFF);
         const btn = new ButtonBuilder()
           .setCustomId('create_ticket')
           .setLabel('Подать заявку')
-          .setStyle(ButtonStyle.Primary);
+          .setStyle(ButtonStyle.Secondary);
         await channel.send({
           embeds: [embed],
           components: [new ActionRowBuilder().addComponents(btn)]
@@ -112,14 +112,13 @@ client.on(Events.InteractionCreate, async interaction => {
       activeTickets.set(interaction.user.id, channel.id);
       const closeBtn = new ButtonBuilder().setCustomId('close_ticket').setLabel('Закрыть тикет').setStyle(ButtonStyle.Danger);
       
+      const ticketEmbed = new EmbedBuilder()
+        .setTitle("Анкета на вступление")
+        .setDescription(`Привет <@${interaction.user.id}>! Заполни анкету:\n\n1. Твой ник в игре\n2. Твой возраст\n3. Твоё устройство\n4. Оцени себя в ПВП 0/10\n5. Готов вылетать на кв?\n6. В каких кланах был до этого?`)
+        .setColor(0xFFFFFF);
+
       await channel.send({
-        content: `Привет <@${interaction.user.id}>! Заполни анкету:
-1. Твой ник в игре
-2. Твой возраст
-3. Твоё устройство
-4. Оцени себя в ПВП 0/10
-5. Готов вылетать на кв?
-6. В каких кланах был до этого?`,
+        embeds: [ticketEmbed],
         components: [new ActionRowBuilder().addComponents(closeBtn)]
       });
       await interaction.reply({ content: `Тикет создан: <#${channel.id}>`, ephemeral: true });
@@ -127,7 +126,11 @@ client.on(Events.InteractionCreate, async interaction => {
 
     if (interaction.customId === "close_ticket") {
       const logChannel = await interaction.guild.channels.fetch(TICKET_LOG_CHANNEL);
-      await logChannel.send(`Тикет пользователя ${interaction.channel.name} был закрыт.`);
+      const closeLogEmbed = new EmbedBuilder()
+        .setDescription(`📌 Тикет пользователя **${interaction.channel.name}** был закрыт модератором **${interaction.user.tag}**`)
+        .setColor(0xFFFFFF);
+      
+      await logChannel.send({ embeds: [closeLogEmbed] });
       
       for (const [userId, channelId] of activeTickets.entries()) {
           if (channelId === interaction.channel.id) activeTickets.delete(userId);
@@ -141,9 +144,9 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!MUTE_ROLES.some(r => member.roles.cache.has(r))) return interaction.reply({ content: "У тебя нет прав!", ephemeral: true });
 
     if (interaction.commandName === "mute") {
-      const target = interaction.options.getMember('target');
-      const time = interaction.options.getString('time');
-      const reason = interaction.options.getString('reason');
+      const target = interaction.options.getMember('имя_игрока');
+      const time = interaction.options.getString('время');
+      const reason = interaction.options.getString('причина');
       const duration = parseTime(time);
 
       if (!duration) return interaction.reply({ content: "Ошибка формата времени (пример: 10м, 1ч)", ephemeral: true });
@@ -151,20 +154,37 @@ client.on(Events.InteractionCreate, async interaction => {
       await target.timeout(duration, reason);
       const log = await interaction.guild.channels.fetch(MUTE_LOG_CHANNEL);
       
-      const muteText = `🔇 **Игрок ${target.user.tag} был замучен на ${time}. Причина: ${reason}**`;
-      log.send(muteText);
-      await interaction.reply({ content: muteText });
+      const muteEmbed = new EmbedBuilder()
+        .setTitle("🚫 Выдано ограничение")
+        .addFields(
+            { name: 'Игрок', value: `${target.user.tag}`, inline: true },
+            { name: 'Срок', value: `${time}`, inline: true },
+            { name: 'Причина', value: `${reason}` }
+        )
+        .setColor(0xFF0000)
+        .setTimestamp();
+
+      await log.send({ embeds: [muteEmbed] });
+      await interaction.reply({ embeds: [muteEmbed] });
     }
 
     if (interaction.commandName === "unmute") {
-      const target = interaction.options.getMember('target');
-      const reason = interaction.options.getString('reason');
+      const target = interaction.options.getMember('имя_игрока');
+      const reason = interaction.options.getString('причина');
       await target.timeout(null);
       const log = await interaction.guild.channels.fetch(MUTE_LOG_CHANNEL);
 
-      const unmuteText = `🔊 **С игрока ${target.user.tag} был снят мут. Причина: ${reason}**`;
-      log.send(unmuteText);
-      await interaction.reply({ content: unmuteText });
+      const unmuteEmbed = new EmbedBuilder()
+        .setTitle("✅ Ограничение снято")
+        .addFields(
+            { name: 'Игрок', value: `${target.user.tag}`, inline: true },
+            { name: 'Причина', value: `${reason}` }
+        )
+        .setColor(0x00FF00)
+        .setTimestamp();
+
+      await log.send({ embeds: [unmuteEmbed] });
+      await interaction.reply({ embeds: [unmuteEmbed] });
     }
   }
 });
