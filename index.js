@@ -10,194 +10,250 @@ const {
   EmbedBuilder,
   REST,
   Routes,
-  SlashCommandBuilder
+  SlashCommandBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } = require('discord.js');
-const http = require('http');
 
-http.createServer((req, res) => {
-  res.write("Bot is online!");
-  res.end();
-}).listen(8080);
-
-const TOKEN = process.env.DISCORD_TOKEN; 
+const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = "1498991210457600020";
 
-const PANEL_CHANNEL_ID = "1498975930922831902";
+// 📌 ID
+const PANEL_CHANNEL = "1498975930922831902";
 const CATEGORY_ID = "1499368333667995658";
-const TICKET_LOG_CHANNEL = "1499488050323918928";
-const MUTE_LOG_CHANNEL = "1499491738971144333";
+const LOG_CHANNEL = "1499488050323918928";
 
-const TICKET_ROLES = ["1498983698857459722", "1498985024416911440", "1498983277216796813"];
-const MUTE_ROLES = ["1498985773477920848", "1498985024416911440", "1498983277216796813", "1498983698857459722"];
+// 👮 роли
+const STAFF_ROLES = [
+  "1498985024416911440",
+  "1498983698857459722",
+  "1498983277216796813"
+];
+
+const MAX_TICKETS = 25;
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
 const activeTickets = new Map();
+const transcripts = new Map();
 
-function parseTime(time) {
-  const num = parseInt(time);
-  const unit = time.slice(-1);
-  if (isNaN(num)) return null;
-  switch (unit) {
-    case "с": return num * 1000;
-    case "м": return num * 60 * 1000;
-    case "ч": return num * 60 * 60 * 1000;
-    case "д": return num * 24 * 60 * 60 * 1000;
-    case "н": return num * 7 * 24 * 60 * 60 * 1000;
-    default: return null;
-  }
+// embed
+const embed = (text) =>
+  new EmbedBuilder().setDescription(text).setColor(0xffffff);
+
+// авто удаление
+async function replyDelete(interaction, text) {
+  const msg = await interaction.reply({
+    embeds: [embed(text)],
+    fetchReply: true
+  });
+  setTimeout(() => msg.delete().catch(() => {}), 5000);
 }
 
+// команды
 const commands = [
   new SlashCommandBuilder()
     .setName('mute')
-    .setDescription('Выдать мут игроку')
-    .addUserOption(o => o.setName('имя_игрока').setDescription('Кого мутим').setRequired(true))
-    .addStringOption(o => o.setName('время').setDescription('с-сек, м-мин, ч-час, д-день, н-нед (Пример: 10м)').setRequired(true))
-    .addStringOption(o => o.setName('причина').setDescription('Причина наказания').setRequired(true)),
+    .setDescription('Мут')
+    .addUserOption(o => o.setName('игрок').setRequired(true))
+    .addStringOption(o => o.setName('время').setRequired(true))
+    .addStringOption(o => o.setName('причина').setRequired(true)),
+
   new SlashCommandBuilder()
     .setName('unmute')
-    .setDescription('Снять мут с игрока')
-    .addUserOption(o => o.setName('имя_игрока').setDescription('С кого снять мут').setRequired(true))
-    .addStringOption(o => o.setName('причина').setDescription('Причина снятия').setRequired(true))
+    .setDescription('Размут')
+    .addUserOption(o => o.setName('игрок').setRequired(true))
+    .addStringOption(o => o.setName('причина').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('clear')
+    .setDescription('Очистить чат')
+    .addIntegerOption(o => o.setName('количество').setRequired(true))
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
+(async () => {
+  await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+})();
 
+// запуск
 client.once('ready', async () => {
-  console.log(`Запущено как ${client.user.tag}`);
-  try {
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-    
-    const channel = await client.channels.fetch(PANEL_CHANNEL_ID);
-    const messages = await channel.messages.fetch({ limit: 10 });
-    const botMsg = messages.find(m => m.author.id === client.user.id);
-    
-    if (!botMsg) {
-        const embed = new EmbedBuilder()
-          .setTitle("Набор в клан")
-          .setDescription('Нажми кнопку ниже, чтобы подать заявку!')
-          .setColor(0xFFFFFF);
-        const btn = new ButtonBuilder()
-          .setCustomId('create_ticket')
-          .setLabel('Подать заявку')
-          .setStyle(ButtonStyle.Secondary);
-        await channel.send({
-          embeds: [embed],
-          components: [new ActionRowBuilder().addComponents(btn)]
-        });
-    }
-  } catch (e) { console.error(e); }
+  const ch = await client.channels.fetch(PANEL_CHANNEL);
+
+  const btn = new ButtonBuilder()
+    .setCustomId('create_ticket')
+    .setLabel('Подать Заявку')
+    .setStyle(ButtonStyle.Primary);
+
+  await ch.send({
+    embeds: [embed("**Набор в клан**\nНажми \"Подать Заявку\" что-бы подать заявку")],
+    components: [new ActionRowBuilder().addComponents(btn)]
+  });
 });
 
+// логика
 client.on(Events.InteractionCreate, async interaction => {
+
+  // ================= ТИКЕТ =================
   if (interaction.isButton()) {
+
     if (interaction.customId === "create_ticket") {
-      if (activeTickets.has(interaction.user.id)) return interaction.reply({ content: "У тебя уже есть открытый тикет!", ephemeral: true });
-      
+
+      if (activeTickets.size >= MAX_TICKETS)
+        return interaction.reply({ embeds:[embed("Лимит тикетов")], ephemeral:true });
+
+      if (activeTickets.has(interaction.user.id))
+        return interaction.reply({ embeds:[embed("У тебя уже есть тикет")], ephemeral:true });
+
       const channel = await interaction.guild.channels.create({
-        name: `заявка-${interaction.user.username}`,
+        name: `ticket-${interaction.user.username}`,
         type: ChannelType.GuildText,
         parent: CATEGORY_ID,
         permissionOverwrites: [
           { id: interaction.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
           { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel] },
-          ...TICKET_ROLES.map(r => ({ id: r, allow: [PermissionsBitField.Flags.ViewChannel] }))
+          ...STAFF_ROLES.map(r => ({ id: r, allow: [PermissionsBitField.Flags.ViewChannel] }))
         ]
       });
-      
+
       activeTickets.set(interaction.user.id, channel.id);
-      const closeBtn = new ButtonBuilder().setCustomId('close_ticket').setLabel('Закрыть тикет').setStyle(ButtonStyle.Danger);
-      
-      const ticketEmbed = new EmbedBuilder()
-        .setTitle("Анкета на вступление")
-        .setDescription(`Привет <@${interaction.user.id}>! Заполни анкету:\n\n1. Твой ник в игре\n2. Твой возраст\n3. Твоё устройство\n4. Оцени себя в ПВП 0/10\n5. Готов вылетать на кв?\n6. В каких кланах был до этого?`)
-        .setColor(0xFFFFFF);
+
+      const close = new ButtonBuilder()
+        .setCustomId('close_ticket')
+        .setLabel('Закрыть')
+        .setStyle(ButtonStyle.Danger);
 
       await channel.send({
-        embeds: [ticketEmbed],
-        components: [new ActionRowBuilder().addComponents(closeBtn)]
+        content:
+`Заполните заявку ниже
+1. Ник
+2. Устройство
+3. Возраст
+4. ПВП 0/10
+5. Готов ли на кв
+6. Где был`,
+        components:[new ActionRowBuilder().addComponents(close)]
       });
-      await interaction.reply({ content: `Тикет создан: <#${channel.id}>`, ephemeral: true });
+
+      await interaction.reply({ embeds:[embed("Тикет создан")], ephemeral:true });
     }
 
     if (interaction.customId === "close_ticket") {
-      const logChannel = await interaction.guild.channels.fetch(TICKET_LOG_CHANNEL);
-      const closeLogEmbed = new EmbedBuilder()
-        .setDescription(`📌 Тикет пользователя **${interaction.channel.name}** был закрыт модератором **${interaction.user.tag}**`)
-        .setColor(0xFFFFFF);
-      
-      await logChannel.send({ embeds: [closeLogEmbed] });
-      
-      for (const [userId, channelId] of activeTickets.entries()) {
-          if (channelId === interaction.channel.id) activeTickets.delete(userId);
-      }
+
+      const modal = new ModalBuilder()
+        .setCustomId('close_modal')
+        .setTitle('Причина закрытия');
+
+      const input = new TextInputBuilder()
+        .setCustomId('reason')
+        .setLabel('Причина')
+        .setStyle(TextInputStyle.Paragraph);
+
+      modal.addComponents(new ActionRowBuilder().addComponents(input));
+
+      return interaction.showModal(modal);
+    }
+
+    if (interaction.customId.startsWith("check_")) {
+
+      const id = interaction.customId.split("_")[1];
+      const data = transcripts.get(id);
+
+      if (!data)
+        return interaction.reply({ embeds:[embed("Лог удалён")], ephemeral:true });
+
+      return interaction.reply({
+        embeds:[embed("```"+data.slice(0,4000)+"```")],
+        ephemeral:true
+      });
+    }
+  }
+
+  // модалка
+  if (interaction.isModalSubmit()) {
+
+    if (interaction.customId === "close_modal") {
+
+      const reason = interaction.fields.getTextInputValue('reason');
+      const messages = await interaction.channel.messages.fetch({ limit:100 });
+
+      const logText = messages.reverse().map(m=>`${m.author.tag}: ${m.content}`).join("\n");
+
+      transcripts.set(interaction.channel.id, logText);
+
+      const log = await interaction.guild.channels.fetch(LOG_CHANNEL);
+
+      const btn = new ButtonBuilder()
+        .setCustomId(`check_${interaction.channel.id}`)
+        .setLabel('Проверить')
+        .setStyle(ButtonStyle.Secondary);
+
+      const msg = await log.send({
+        embeds:[embed(`Тикет закрыт\nПричина: ${reason}`)],
+        components:[new ActionRowBuilder().addComponents(btn)]
+      });
+
+      setTimeout(()=>{
+        transcripts.delete(interaction.channel.id);
+        msg.delete().catch(()=>{});
+      }, 7*24*60*60*1000);
+
+      for (let [u,c] of activeTickets)
+        if (c === interaction.channel.id) activeTickets.delete(u);
+
+      await interaction.reply({ embeds:[embed("Тикет закрыт")], ephemeral:true });
       await interaction.channel.delete();
     }
   }
 
-  if (interaction.isChatInputCommand()) {
-    const member = interaction.member;
-    if (!MUTE_ROLES.some(r => member.roles.cache.has(r))) return interaction.reply({ content: "У тебя нет прав!", ephemeral: true });
+  // ================= КОМАНДЫ =================
+  if (!interaction.isChatInputCommand()) return;
 
-    // Добавляем deferReply, чтобы Discord не писал "Приложение не отвечает"
-    await interaction.deferReply();
+  const member = interaction.member;
+  if (!STAFF_ROLES.some(r => member.roles.cache.has(r)))
+    return replyDelete(interaction,"Нет прав");
 
-    if (interaction.commandName === "mute") {
-      const target = interaction.options.getMember('имя_игрока');
-      const time = interaction.options.getString('время');
-      const reason = interaction.options.getString('причина');
-      const duration = parseTime(time);
+  // clear
+  if (interaction.commandName === "clear") {
+    const amount = interaction.options.getInteger('количество');
+    if (amount > 1000) return replyDelete(interaction,"Максимум 1000");
 
-      if (!duration) return interaction.editReply({ content: "Ошибка формата времени (пример: 10м, 1ч)" });
-      
-      try {
-        await target.timeout(duration, reason);
-        const log = await interaction.guild.channels.fetch(MUTE_LOG_CHANNEL);
-        
-        const muteEmbed = new EmbedBuilder()
-          .setTitle("🚫 Выдано ограничение")
-          .addFields(
-              { name: 'Игрок', value: `${target.user.tag}`, inline: true },
-              { name: 'Срок', value: `${time}`, inline: true },
-              { name: 'Причина', value: `${reason}` }
-          )
-          .setColor(0xFF0000)
-          .setTimestamp();
-
-        await log.send({ embeds: [muteEmbed] });
-        await interaction.editReply({ embeds: [muteEmbed] });
-      } catch (e) {
-        await interaction.editReply({ content: "Не удалось выдать мут. Возможно, у бота недостаточно прав." });
-      }
-    }
-
-    if (interaction.commandName === "unmute") {
-      const target = interaction.options.getMember('имя_игрока');
-      const reason = interaction.options.getString('причина');
-      
-      try {
-        await target.timeout(null);
-        const log = await interaction.guild.channels.fetch(MUTE_LOG_CHANNEL);
-
-        const unmuteEmbed = new EmbedBuilder()
-          .setTitle("✅ Ограничение снято")
-          .addFields(
-              { name: 'Игрок', value: `${target.user.tag}`, inline: true },
-              { name: 'Причина', value: `${reason}` }
-          )
-          .setColor(0x00FF00)
-          .setTimestamp();
-
-        await log.send({ embeds: [unmuteEmbed] });
-        await interaction.editReply({ embeds: [unmuteEmbed] });
-      } catch (e) {
-        await interaction.editReply({ content: "Не удалось снять мут. Возможно, мута и не было." });
-      }
-    }
+    await interaction.channel.bulkDelete(amount,true);
+    return replyDelete(interaction,`Удалено ${amount}`);
   }
+
+  // mute
+  if (interaction.commandName === "mute") {
+
+    const target = interaction.options.getMember('игрок');
+    const time = interaction.options.getString('время');
+
+    const num = parseInt(time);
+    const unit = time.slice(-1);
+
+    let ms = 0;
+    if(unit==="м") ms=num*60000;
+    if(unit==="ч") ms=num*3600000;
+    if(unit==="д") ms=num*86400000;
+
+    if (member.roles.highest.position <= target.roles.highest.position)
+      return replyDelete(interaction,"Нельзя мутить выше");
+
+    await target.timeout(ms);
+    return replyDelete(interaction,"Мут выдан");
+  }
+
+  // unmute
+  if (interaction.commandName === "unmute") {
+
+    const target = interaction.options.getMember('игрок');
+    await target.timeout(null);
+    return replyDelete(interaction,"Мут снят");
+  }
+
 });
 
 client.login(TOKEN);
