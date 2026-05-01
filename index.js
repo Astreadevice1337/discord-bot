@@ -55,7 +55,6 @@ const commands = [
     .setName('mute')
     .setDescription('Выдать мут игроку')
     .addUserOption(o => o.setName('имя_игрока').setDescription('Кого мутим').setRequired(true))
-    // Твоя новая детальная подсказка:
     .addStringOption(o => o.setName('время').setDescription('с-сек, м-мин, ч-час, д-день, н-нед (Пример: 10м)').setRequired(true))
     .addStringOption(o => o.setName('причина').setDescription('Причина наказания').setRequired(true)),
   new SlashCommandBuilder()
@@ -143,48 +142,60 @@ client.on(Events.InteractionCreate, async interaction => {
     const member = interaction.member;
     if (!MUTE_ROLES.some(r => member.roles.cache.has(r))) return interaction.reply({ content: "У тебя нет прав!", ephemeral: true });
 
+    // Добавляем deferReply, чтобы Discord не писал "Приложение не отвечает"
+    await interaction.deferReply();
+
     if (interaction.commandName === "mute") {
       const target = interaction.options.getMember('имя_игрока');
       const time = interaction.options.getString('время');
       const reason = interaction.options.getString('причина');
       const duration = parseTime(time);
 
-      if (!duration) return interaction.reply({ content: "Ошибка формата времени (пример: 10м, 1ч)", ephemeral: true });
+      if (!duration) return interaction.editReply({ content: "Ошибка формата времени (пример: 10м, 1ч)" });
       
-      await target.timeout(duration, reason);
-      const log = await interaction.guild.channels.fetch(MUTE_LOG_CHANNEL);
-      
-      const muteEmbed = new EmbedBuilder()
-        .setTitle("🚫 Выдано ограничение")
-        .addFields(
-            { name: 'Игрок', value: `${target.user.tag}`, inline: true },
-            { name: 'Срок', value: `${time}`, inline: true },
-            { name: 'Причина', value: `${reason}` }
-        )
-        .setColor(0xFF0000)
-        .setTimestamp();
+      try {
+        await target.timeout(duration, reason);
+        const log = await interaction.guild.channels.fetch(MUTE_LOG_CHANNEL);
+        
+        const muteEmbed = new EmbedBuilder()
+          .setTitle("🚫 Выдано ограничение")
+          .addFields(
+              { name: 'Игрок', value: `${target.user.tag}`, inline: true },
+              { name: 'Срок', value: `${time}`, inline: true },
+              { name: 'Причина', value: `${reason}` }
+          )
+          .setColor(0xFF0000)
+          .setTimestamp();
 
-      await log.send({ embeds: [muteEmbed] });
-      await interaction.reply({ embeds: [muteEmbed] });
+        await log.send({ embeds: [muteEmbed] });
+        await interaction.editReply({ embeds: [muteEmbed] });
+      } catch (e) {
+        await interaction.editReply({ content: "Не удалось выдать мут. Возможно, у бота недостаточно прав." });
+      }
     }
 
     if (interaction.commandName === "unmute") {
       const target = interaction.options.getMember('имя_игрока');
       const reason = interaction.options.getString('причина');
-      await target.timeout(null);
-      const log = await interaction.guild.channels.fetch(MUTE_LOG_CHANNEL);
+      
+      try {
+        await target.timeout(null);
+        const log = await interaction.guild.channels.fetch(MUTE_LOG_CHANNEL);
 
-      const unmuteEmbed = new EmbedBuilder()
-        .setTitle("✅ Ограничение снято")
-        .addFields(
-            { name: 'Игрок', value: `${target.user.tag}`, inline: true },
-            { name: 'Причина', value: `${reason}` }
-        )
-        .setColor(0x00FF00)
-        .setTimestamp();
+        const unmuteEmbed = new EmbedBuilder()
+          .setTitle("✅ Ограничение снято")
+          .addFields(
+              { name: 'Игрок', value: `${target.user.tag}`, inline: true },
+              { name: 'Причина', value: `${reason}` }
+          )
+          .setColor(0x00FF00)
+          .setTimestamp();
 
-      await log.send({ embeds: [unmuteEmbed] });
-      await interaction.reply({ embeds: [unmuteEmbed] });
+        await log.send({ embeds: [unmuteEmbed] });
+        await interaction.editReply({ embeds: [unmuteEmbed] });
+      } catch (e) {
+        await interaction.editReply({ content: "Не удалось снять мут. Возможно, мута и не было." });
+      }
     }
   }
 });
