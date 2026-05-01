@@ -70,14 +70,14 @@ function parseTime(timeStr) {
 // Регистрация команд
 const commands = [
   new SlashCommandBuilder().setName('mute').setDescription('Выдать тайм-аут')
-    .addUserOption(o => o.setName('игрок').setRequired(true))
-    .addStringOption(o => o.setName('время').setRequired(true))
-    .addStringOption(o => o.setName('причина').setRequired(true)),
+    .addUserOption(o => o.setName('игрок').setDescription('Пользователь для мута').setRequired(true))
+    .addStringOption(o => o.setName('время').setDescription('Время (s, m, h, d, w)').setRequired(true))
+    .addStringOption(o => o.setName('причина').setDescription('Причина мута').setRequired(true)),
   new SlashCommandBuilder().setName('unmute').setDescription('Снять тайм-аут')
-    .addUserOption(o => o.setName('игрок').setRequired(true))
-    .addStringOption(o => o.setName('причина').setRequired(true)),
+    .addUserOption(o => o.setName('игрок').setDescription('Пользователь для размута').setRequired(true))
+    .addStringOption(o => o.setName('причина').setDescription('Причина снятия мута').setRequired(true)),
   new SlashCommandBuilder().setName('clear').setDescription('Очистить чат')
-    .addIntegerOption(o => o.setName('количество').setRequired(true))
+    .addIntegerOption(o => o.setName('количество').setDescription('Количество сообщений').setRequired(true))
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
